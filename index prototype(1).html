@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>UniGuard — Live Read-Only Analyst Console</title>
+<style>
+:root{--bg:#07111f;--panel:#0d1c33;--panel2:#122846;--line:#1d385d;--ink:#e7eef5;--muted:#91a9c2;--teal:#22d3c5;--amber:#f5bd5c;--red:#ef6b70;--green:#61d68a;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}*{box-sizing:border-box}body{margin:0;background:radial-gradient(900px 500px at 90% -10%,#103a58 0,transparent 60%),var(--bg);color:var(--ink);font:14px Inter,system-ui,sans-serif}.wrap{max-width:1360px;margin:auto;padding:22px}.top{display:flex;gap:18px;align-items:center;border-bottom:1px solid var(--line);padding:4px 0 18px}.logo{width:46px;height:46px;border:2px solid var(--teal);border-radius:10px;display:grid;place-items:center;color:var(--teal);font-weight:800}.brand h1{margin:0;font-size:22px}.sub{color:var(--muted);font-size:12px;margin-top:4px}.pills{margin-left:auto;display:flex;gap:10px;flex-wrap:wrap}.pill{padding:8px 12px;border:1px solid var(--line);border-radius:99px;color:var(--muted);font-size:12px}.pill.ok{border-color:#2b8f76;color:var(--green)}.banner{margin:18px 0;padding:12px 14px;border:1px solid #895f24;background:#2a2112;color:var(--amber);border-radius:8px}.grid{display:grid;grid-template-columns:1.35fr 1fr;gap:18px}.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:18px}.kpi,.panel{background:rgba(13,28,51,.94);border:1px solid var(--line);border-radius:10px}.kpi{padding:14px}.kpi small{display:block;color:var(--muted);font-size:11px}.kpi strong{display:block;font-size:25px;margin-top:7px}.panel{overflow:hidden}.head{padding:13px 15px;border-bottom:1px solid var(--line);font-weight:700;display:flex;justify-content:space-between}.controls{padding:12px 15px;display:flex;gap:9px;align-items:center;border-bottom:1px solid var(--line);flex-wrap:wrap}button{border:1px solid var(--line);background:var(--panel2);color:var(--ink);padding:8px 12px;border-radius:6px;cursor:pointer}button:hover{border-color:var(--teal);color:var(--teal)}select{background:var(--panel2);color:var(--ink);border:1px solid var(--line);padding:8px;border-radius:6px}.alerts{max-height:650px;overflow:auto}.alert{padding:12px 15px;border-bottom:1px solid #172e4d;cursor:pointer}.alert:hover{background:#102744}.row{display:flex;justify-content:space-between;gap:12px}.badge{font-size:10px;font-weight:800;border-radius:4px;padding:4px 7px;text-transform:uppercase}.critical{color:#ff9b9f;background:#4a2026}.high{color:#ffc177;background:#46321a}.medium{color:#ffe487;background:#403b1a}.low{color:#9edcff;background:#19364b}.threat{font-weight:700}.muted{color:var(--muted);font-size:12px}.evidence{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}.ev{border:1px solid var(--line);border-radius:5px;padding:4px 7px;color:var(--teal);font-size:11px}.stat{display:flex;justify-content:space-between;padding:10px 15px;border-bottom:1px solid #172e4d}.stat span:first-child{color:var(--muted)}.stat span:last-child{font-weight:700}.good{color:var(--green)}.warn{color:var(--amber)}.danger{color:var(--red)}.note{margin-top:18px;color:var(--muted);font-size:12px;line-height:1.5}@media(max-width:1000px){.grid{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(3,1fr)}}@media(max-width:650px){.kpis{grid-template-columns:repeat(2,1fr)}.pills{margin-left:0}.top{align-items:flex-start;flex-wrap:wrap}}
+</style></head><body><div class="wrap">
+<header class="top"><div class="logo">UG</div><div class="brand"><h1>UniGuard <span style="color:var(--muted);font-weight:400">— Analyst Console</span></h1><div class="sub">SIH26145 · TerraWatch · Project UniGuard · live metadata pipeline</div></div><div class="pills"><span class="pill ok">● READ-ONLY</span><span class="pill ok" id="health">● API checking</span><span class="pill">No probe / block path</span></div></header>
+<div class="banner"><b>Safety boundary:</b> this service accepts flow metadata and emits intelligence only. It has no endpoint for blocking, quarantine, probing or TLS/QUIC decryption.</div>
+<section class="kpis" id="kpis"></section>
+<div class="grid"><section class="panel"><div class="head"><span>Live alert stream</span><span class="muted" id="refresh">polling…</span></div><div class="controls"><button id="start">▶ Start replay</button><button id="stop">■ Stop</button><button id="inject">＋ Inject test flow</button><select id="filter"><option value="all">All severities</option><option>critical</option><option>high</option><option>medium</option><option>low</option></select></div><div class="alerts" id="alerts"></div></section>
+<aside><section class="panel"><div class="head">Operational status</div><div id="ops"></div></section><section class="panel" style="margin-top:18px"><div class="head">Evaluation and safeguards</div><div id="eval"></div></section></aside></div>
+<div class="note">This build runs entirely in your browser: a self-contained simulator stands in for the read-only collector, feature service and model layer from the SIH26145 blueprint, generating synthetic alerts across all seven required threat families. For deployment, point the same <code>/api/*</code> paths at the real FastAPI/Redis Streams service fed by Zeek conn/dns/ssl logs or IPFIX/NetFlow/sFlow from a one-way mirror/data diode — no other change is needed on this page. Metrics shown are illustrative until capture-separated external validation is completed.</div>
+</div><script>
+let timer=null; const $=id=>document.getElementById(id);
+
+/* ------------------------------------------------------------------
+   In-browser simulator — stands in for the FastAPI / Redis Streams
+   service in the SIH26145 blueprint so this console runs standalone,
+   with no server. It answers the same /api/* paths the UI already
+   calls, so pointing them at the real read-only backend later needs
+   no other change on this page.
+--------------------------------------------------------------------- */
+const SimBackend = (() => {
+  const FAMILIES = [
+    { key:'ddos', sev:'critical', detectors:['rule:syn_flood','model:xgb-v1'],
+      evid:()=>[
+        {feature:'syn_ack_ratio', value:(8+Math.random()*6).toFixed(2)},
+        {feature:'source_ip_entropy', value:(0.08+Math.random()*0.18).toFixed(2)},
+        {feature:'packets_per_sec', value:Math.round(4200+Math.random()*2800)} ]},
+    { key:'c2_beacon', sev:'high', detectors:['model:xgb-v1','model:iforest-v1'],
+      evid:()=>[
+        {feature:'interarrival_cv', value:(0.02+Math.random()*0.05).toFixed(3)},
+        {feature:'periodicity_score', value:(0.85+Math.random()*0.12).toFixed(2)},
+        {feature:'destination_persistence', value:(0.9+Math.random()*0.09).toFixed(2)} ]},
+    { key:'dns_tunnelling', sev:'high', detectors:['rule:dns_entropy','model:xgb-v1'],
+      evid:()=>[
+        {feature:'dns_query_entropy', value:(4.2+Math.random()*0.9).toFixed(2)},
+        {feature:'nxdomain_ratio', value:(0.55+Math.random()*0.35).toFixed(2)},
+        {feature:'txt_record_rate', value:(0.3+Math.random()*0.4).toFixed(2)} ]},
+    { key:'encrypted_anomaly', sev:'medium', detectors:['model:xgb-v1'],
+      evid:()=>[
+        {feature:'sni_rarity', value:(0.7+Math.random()*0.25).toFixed(2)},
+        {feature:'ja3_fingerprint_rarity', value:(0.6+Math.random()*0.3).toFixed(2)},
+        {feature:'packet_size_seq_dev', value:(0.4+Math.random()*0.3).toFixed(2)} ]},
+    { key:'reconnaissance', sev:'high', detectors:['rule:scan_fanout','model:xgb-v1'],
+      evid:()=>[
+        {feature:'unique_dest_ports', value:Math.round(40+Math.random()*200)},
+        {feature:'failed_conn_ratio', value:(0.7+Math.random()*0.25).toFixed(2)},
+        {feature:'scan_burstiness', value:(0.6+Math.random()*0.3).toFixed(2)} ]},
+    { key:'exfiltration', sev:'critical', detectors:['model:xgb-v1','model:iforest-v1'],
+      evid:()=>[
+        {feature:'outbound_inbound_ratio', value:(6+Math.random()*10).toFixed(1)},
+        {feature:'destination_novelty', value:(0.75+Math.random()*0.2).toFixed(2)},
+        {feature:'transfer_periodicity', value:(0.5+Math.random()*0.3).toFixed(2)} ]},
+    { key:'unknown_anomaly', sev:'low', detectors:['model:iforest-v1'],
+      evid:()=>[
+        {feature:'zscore_deviation', value:(2.1+Math.random()*1.4).toFixed(2)},
+        {feature:'source_baseline_delta', value:(0.3+Math.random()*0.3).toFixed(2)} ]},
+  ];
+  const SCOPES=['sensor-01','sensor-02','sensor-03'];
+  let seq=0, replayTimer=null;
+  const state = {
+    mode:'idle', last_event:null, flows_processed:0, alerts_emitted:0,
+    observed_flows_per_sec:0, feedback_count:0, evidence_chain:{records:0}, alerts:[],
+    evaluation:{
+      model_version:'xgb-2026-09-01', novelty_version:'ihs-trees-v1',
+      evaluation_scope:'held-out synthetic lab (CIC-IDS2017 + UNSW-NB15 + lab replay)',
+      macro_f1_known_families:0.91, known_families:7, novel_class_catch_rate:0.79,
+      benign_false_positive_rate:0.011,
+    },
+  };
+
+  function pushAlert(fam, overrides={}){
+    seq++;
+    const a = {
+      alert_id:'a-'+seq,
+      event_time:new Date().toISOString(),
+      flow_id:overrides.flow_id || ('flow-'+Date.now().toString(36)+'-'+seq),
+      threat_class:fam.key,
+      severity:fam.sev,
+      confidence:Number((0.72+Math.random()*0.27).toFixed(2)),
+      source_scope:overrides.source_scope || SCOPES[Math.floor(Math.random()*SCOPES.length)],
+      evidence:fam.evid(),
+      detectors:fam.detectors,
+      model_version:state.evaluation.model_version,
+      read_only:true,
+    };
+    state.alerts.unshift(a);
+    if (state.alerts.length>300) state.alerts.length=300;
+    state.alerts_emitted++;
+    state.evidence_chain.records++;
+    state.last_event = a.threat_class+' @ '+a.event_time.slice(11,19);
+  }
+
+  function tick(speedMs){
+    const batch = Math.round(180+Math.random()*260);
+    state.flows_processed += batch;
+    state.observed_flows_per_sec = Math.round(batch/(speedMs/1000));
+    if (Math.random() < 0.42){
+      pushAlert(FAMILIES[Math.floor(Math.random()*FAMILIES.length)]);
+    }
+  }
+
+  return {
+    getState(limit){ return { ...state, alerts: state.alerts.slice(0, limit||120) }; },
+    startReplay(speedMs){
+      speedMs = Math.max(60, Number(speedMs)||500);
+      this.stopReplay();
+      state.mode='replay';
+      replayTimer=setInterval(()=>tick(speedMs), speedMs);
+      return {ok:true, mode:state.mode};
+    },
+    stopReplay(){
+      if (replayTimer){ clearInterval(replayTimer); replayTimer=null; }
+      state.mode='idle';
+      return {ok:true, mode:state.mode};
+    },
+    ingest(flow){
+      state.flows_processed += 1;
+      const packets = Number(flow.packets)||0;
+      const synCount = Number(flow.syn_count)||0;
+      const durS = Math.max(0.05,(Number(flow.duration_ms)||1000)/1000);
+      const synRatio = packets>0 ? synCount/packets : 0;
+      let fam=null, overrides={flow_id:flow.flow_id, source_scope:'manual-ingest'};
+      if (packets>1500 && synRatio>0.35){
+        const base = FAMILIES.find(f=>f.key==='ddos');
+        overrides.evidenceOverride=[
+          {feature:'syn_ack_ratio', value:(synRatio*20).toFixed(2)},
+          {feature:'packets_per_sec', value:Math.round(packets/durS)},
+          {feature:'duration_ms', value:flow.duration_ms} ];
+        fam = { ...base, evid:()=>overrides.evidenceOverride };
+      } else if (Number(flow.bytes)>200000 && durS>60){
+        fam = FAMILIES.find(f=>f.key==='exfiltration');
+      }
+      if (fam){ pushAlert(fam, overrides); return {ok:true, alert_raised:true, threat_class:fam.key}; }
+      state.last_event = 'benign flow processed';
+      return {ok:true, alert_raised:false};
+    },
+    feedback(){ state.feedback_count++; return {ok:true, feedback_count:state.feedback_count}; },
+  };
+})();
+
+async function api(path, opts={}){
+  const [route, qs] = path.split('?');
+  const params = new URLSearchParams(qs||'');
+  const method = (opts.method||'GET').toUpperCase();
+  await new Promise(r=>setTimeout(r, 25+Math.random()*40)); // honest polling feel
+  if (route==='/api/state' && method==='GET') return SimBackend.getState(Number(params.get('limit'))||120);
+  if (route==='/api/replay/start' && method==='POST') return SimBackend.startReplay(Number(params.get('speed_ms'))||500);
+  if (route==='/api/replay/stop' && method==='POST') return SimBackend.stopReplay();
+  if (route==='/api/ingest' && method==='POST') return SimBackend.ingest(opts.body?JSON.parse(opts.body):{});
+  if (route==='/api/feedback' && method==='POST') return SimBackend.feedback();
+  throw new Error('Unknown endpoint: '+path);
+}
+
+function esc(x){return String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function render(s){
+ const e=s.evaluation||{}; const a=s.alerts||[]; const filter=$('filter').value;
+ $('kpis').innerHTML=[['Flows processed',s.flows_processed],['Alerts emitted',s.alerts_emitted],['Observed flows/sec',s.observed_flows_per_sec],['Benign FPR',((e.benign_false_positive_rate||0)*100).toFixed(2)+'%'],['Chain records',s.evidence_chain.records]].map(x=>`<div class="kpi"><small>${x[0]}</small><strong>${esc(x[1])}</strong></div>`).join('');
+ const shown=filter==='all'?a:a.filter(x=>x.severity===filter); $('alerts').innerHTML=shown.length?shown.map(x=>`<div class="alert"><div class="row"><span class="badge ${esc(x.severity)}">${esc(x.severity)}</span><span class="threat">${esc(x.threat_class)}</span><span class="muted">${esc(x.event_time)}</span><b>${(x.confidence*100).toFixed(1)}%</b></div><div class="muted" style="margin-top:5px">${esc(x.flow_id)} · ${esc(x.source_scope)} · ${esc(x.detectors?.join(', '))}</div><div class="evidence">${(x.evidence||[]).map(v=>`<span class="ev">${esc(v.feature)}=${esc(v.value)}</span>`).join('')}</div></div>`).join(''):'<div class="muted" style="padding:30px">No alerts match this filter.</div>';
+ $('ops').innerHTML=[['Mode',s.mode],['Last event',s.last_event||'waiting'],['Payload handling','metadata-only'],['Read-only guarantee','true'],['API egress to monitored side','false'],['Model',e.model_version],['Novelty model',e.novelty_version]].map(x=>`<div class="stat"><span>${x[0]}</span><span class="${x[1]==='false'?'good':''}">${esc(x[1])}</span></div>`).join('');
+ $('eval').innerHTML=[['Evaluation scope',e.evaluation_scope],['Held-out macro-F1',e.macro_f1_known_families],['Known families',e.known_families+'/7'],['Novel catch rate',e.novel_class_catch_rate],['Feedback records',s.feedback_count]].map(x=>`<div class="stat"><span>${x[0]}</span><span>${esc(x[1])}</span></div>`).join('');
+ $('refresh').textContent='updated '+new Date().toLocaleTimeString();
+}
+async function refresh(){try{const s=await api('/api/state?limit=120');render(s);$('health').textContent='● API healthy';$('health').className='pill ok'}catch(e){$('health').textContent='● API unavailable';$('health').className='pill danger'}}
+$('start').onclick=async()=>{await api('/api/replay/start?speed_ms=100',{method:'POST'}); if(!timer) timer=setInterval(refresh,500)};
+$('stop').onclick=async()=>{await api('/api/replay/stop',{method:'POST'});clearInterval(timer);timer=null;refresh()};
+$('inject').onclick=async()=>{await api('/api/ingest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flow_id:'manual-test-'+Date.now(),source_ip:'10.10.10.5',destination_ip:'192.168.1.10',protocol:'TCP',packets:3000,bytes:500000,duration_ms:500,syn_count:1200})});refresh()};
+$('alerts').addEventListener('click', async (ev)=>{
+  const row = ev.target.closest('.alert');
+  if (!row) return;
+  await api('/api/feedback',{method:'POST'});
+  row.style.opacity='0.55';
+});
+$('filter').onchange=refresh; refresh(); setInterval(refresh,2500);
+</script></body></html>
